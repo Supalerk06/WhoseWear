@@ -103,7 +103,7 @@ const compressImage = (file, maxWidth = maxImageWidth) => {
           });
           
           resolve(compressedFile);
-        }, "image/jpeg", 0.75); // 👈 กำหนด MIME type เป็น JPEG และบีบอัดคุณภาพเหลือ 75%
+        }, "image/jpeg", 0.75); // กำหนด MIME type เป็น JPEG และบีบอัดคุณภาพเหลือ 75%
       };
       img.onerror = (err) => reject(err);
     };
