@@ -51,6 +51,65 @@ const solidColors = [
   { name: "ครีม", code: "#DDB4A5" },
 ];
 const isDarkMode = ref(false);
+const isFilterExpanded = ref(false);
+const maxImageWidth = 900;
+
+// บีบอัดรูปภาพฝั่ง Frontend ด้วย HTML5 Canvas (อัปเดตแก้บัค PNG & พื้นหลังดำ)
+const compressImage = (file, maxWidth = maxImageWidth) => {
+  return new Promise((resolve, reject) => {
+    if (!file) return resolve(null);
+    if (!file.type.startsWith("image/")) return resolve(file); // ถ้าไม่ใช่ไฟล์รูปภาพให้ส่งกลับไปเลย
+
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+
+        // คำนวณอัตราส่วนเพื่อย่อขนาดความกว้างไม่ให้เกิน maxWidth
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext("2d");
+
+        // 🌟 ทริคพิเศษ: เติมพื้นหลังสีขาวก่อนวาดรูป 
+        // ป้องกันบัคภาพ PNG ที่มีพื้นหลังโปร่งใส กลายเป็นพื้นหลังสีดำเมื่อถูกแปลงเป็น JPEG
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, width, height);
+
+        // วาดรูปภาพต้นฉบับทับลงไป
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // 🛠️ แก้กับดัก PNG (The PNG Trap)
+        // บังคับแปลงผลลัพธ์เป็น "image/jpeg" เสมอ เพื่อให้คำสั่งลดคุณภาพ (0.75) ทำงานได้จริง
+        canvas.toBlob((blob) => {
+          if (!blob) return resolve(file); // ถ้าแปลงล้มเหลวให้คืนค่าไฟล์ต้นฉบับ
+          
+          // เปลี่ยนนามสกุลไฟล์ที่ได้ให้เป็น .jpg เพื่อไม่ให้ Supabase/Browser สับสน
+          const newFileName = file.name.replace(/\.[^/.]+$/, ".jpg");
+          
+          const compressedFile = new File([blob], newFileName, {
+            type: "image/jpeg",
+            lastModified: Date.now(),
+          });
+          
+          resolve(compressedFile);
+        }, "image/jpeg", 0.75); // 👈 กำหนด MIME type เป็น JPEG และบีบอัดคุณภาพเหลือ 75%
+      };
+      img.onerror = (err) => reject(err);
+    };
+    reader.onerror = (err) => reject(err);
+  });
+};
 
 const selectColor = (color) => {
   const colorName = typeof color === "object" ? color.name : color;
@@ -92,22 +151,7 @@ const selectedItem = ref(null);
 const itemToEdit = ref(null);
 const itemToDelete = ref(null);
 
-// Constants
-const colorOptions = [
-  { name: "ขาว", code: "#FFFFFF" },
-  { name: "ดำ", code: "#000000" },
-  { name: "เทา", code: "#808080" },
-  { name: "แดง", code: "#FF0000" },
-  { name: "ชมพู", code: "#FFC0CB" },
-  { name: "เขียว", code: "#008000" },
-  { name: "ฟ้า", code: "#00BFFF" },
-  { name: "น้ำเงิน", code: "##0f377f" },
-  { name: "เหลือง", code: "#FFFF00" },
-  { name: "ส้ม", code: "#FFA500" },
-  { name: "ม่วง", code: "#800080" },
-  { name: "น้ำตาล", code: "#A52A2A" },
-  { name: "ครีม", code: "#DDB4A5" },
-];
+const colorOptions = solidColors
 
 // Use color objects with name and code
 const categories = [
@@ -189,7 +233,7 @@ const filteredClothes = computed(() => {
   ) {
     // Pattern mode: match any of the selected colors
     result = result.filter((item) =>
-      selectedColors.value.some((col) => item.colors.includes(col))
+      selectedColors.value.every((col) => item.colors.includes(col))
     );
   }
 
@@ -203,8 +247,8 @@ const openAddModal = () => {
 };
 
 const openEditModal = (item) => {
-  itemToEdit.value = item;
-  isFormModalOpen.value = true;
+  itemToEdit.value = item;          // 1. ส่งข้อมูลเสื้อตัวที่จะแก้เข้าไปเก็บใน state
+  isFormModalOpen.value = true;      // 2. สั่งเปิดหน้าต่าง FormModal (Edit Mode) ขึ้นมาทันที
 };
 
 const openDetailModal = (item) => {
@@ -217,51 +261,80 @@ const triggerDelete = (item) => {
   isConfirmDeleteOpen.value = true;
 };
 
-// Submissions
+// อัปเดตการทำงานฟังก์ชันบันทึกข้อมูล
 const handleFormSave = async (payload) => {
   actionLoading.value = true;
   try {
+    let finalImageFile = payload.imageFile;
+
+    // 1. ตรวจสอบและย่อขนาดรูปภาพก่อนส่งขึ้นระบบสโตเรจ
+    if (finalImageFile) {
+      try {
+        finalImageFile = await compressImage(finalImageFile, maxImageWidth);
+      } catch (compressErr) {
+        console.error("การบีบอัดรูปภาพล้มเหลว จะใช้รูปต้นฉบับแทน:", compressErr);
+      }
+    }
+
+    // 2. ส่งข้อมูลบันทึกเข้า Supabase ตามโหมด
     if (itemToEdit.value) {
       // Edit mode
       await updateClothingItem(
         itemToEdit.value.id,
         payload.form,
-        payload.imageFile,
+        finalImageFile,
         itemToEdit.value.image_path
       );
     } else {
       // Add mode
-      await addClothingItem(payload.form, payload.imageFile);
+      await addClothingItem(payload.form, finalImageFile);
     }
-    isFormModalOpen.value = false;
+
+    // 3. หน่วงเวลาให้ค้างหน้า Loading ไว้ 2 วิก่อนทำการรีเฟรชหน้าจอเพื่ออัปเดตการ์ด
+    setTimeout(() => {
+      isFormModalOpen.value = false;
+      actionLoading.value = false;
+      window.location.reload(); // รีเฟรชเว็บเพื่อโหลดข้อมูลใหม่ล่าสุด
+    }, 2000);
+
   } catch (err) {
     alert(err.message);
-  } finally {
     actionLoading.value = false;
   }
 };
 
+// อัปเดตการทำงานฟังก์ชันลบข้อมูล
 const handleDeleteConfirm = async () => {
   if (!itemToDelete.value) return;
   actionLoading.value = true;
   try {
+    // 1. ทำการลบข้อมูลบน Supabase
     await deleteClothingItem(
       itemToDelete.value.id,
       itemToDelete.value.image_path
     );
-    isConfirmDeleteOpen.value = false;
-    itemToDelete.value = null;
 
-    // Close detail modal if the deleted item was currently open
-    if (
-      selectedItem.value &&
-      selectedItem.value.id === itemToDelete?.value?.id
-    ) {
-      isDetailModalOpen.value = false;
-    }
+    // 2. หน่วงเวลาแสดงสถานะ Loading 2 วินาที เพื่อให้ผู้ใช้เห็นสถานะการทำงาน
+    setTimeout(() => {
+      isConfirmDeleteOpen.value = false;
+      
+      // ถ้าเปิด Modal รายละเอียดของตัวที่ลบอยู่ ให้ปิดหน้าต่างไปด้วย
+      if (
+        selectedItem.value &&
+        selectedItem.value.id === itemToDelete?.value?.id
+      ) {
+        isDetailModalOpen.value = false;
+      }
+      
+      itemToDelete.value = null;
+      actionLoading.value = false;
+      
+      // 3. สั่งรีเฟรชเว็บเพื่อให้การ์ดใบที่ลบหายไปทันทีแบบเรียลไทม์
+      window.location.reload();
+    }, 2000);
+
   } catch (err) {
     alert(err.message);
-  } finally {
     actionLoading.value = false;
   }
 };
@@ -489,6 +562,7 @@ const handleDeleteConfirm = async () => {
           </svg>
           ตัวกรองข้อมูล
         </h2>
+        <div class="flex gap-2 justify-center items-center">
             <button
               @click="resetFilters"
               class="px-4 py-2 flex items-center justify-center gap-2 text-lg font-bold bg-gray-300 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-xl hover:bg-gray-400 dark:hover:bg-gray-600 transition-colors cursor-pointer"
@@ -496,8 +570,29 @@ const handleDeleteConfirm = async () => {
               <svg class="dark:fill-[#e3e3e3] " xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px"><path d="M339.5-108.5q-65.5-28.5-114-77t-77-114Q120-365 120-440h80q0 117 81.5 198.5T480-160q117 0 198.5-81.5T760-440q0-117-81.5-198.5T480-720h-6l62 62-56 58-160-160 160-160 56 58-62 62h6q75 0 140.5 28.5t114 77q48.5 48.5 77 114T840-440q0 75-28.5 140.5t-77 114q-48.5 48.5-114 77T480-80q-75 0-140.5-28.5Z"/></svg>
               รีเซ็ต
             </button>
+
+            <button
+                @click="isFilterExpanded = !isFilterExpanded"
+                class="p-2 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-transform duration-350 cursor-pointer focus:outline-none flex items-center justify-center"
+                :class="{ 'rotate-180': isFilterExpanded }"
+                aria-label="แสดงหรือซ่อนตัวกรองข้อมูล"
+              >
+                <svg class="fill-current w-8 h-8 transition-colors" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960">
+                  <path d="M480-360 280-560h400L480-360Z"/>
+                </svg>
+              </button>
+        </div>
       </div>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+      <Transition
+          enter-active-class="transition-all duration-300 ease-out"
+          enter-from-class="max-h-0 opacity-0 overflow-hidden"
+          enter-to-class="max-h-[1000px] opacity-100 overflow-hidden"
+          leave-active-class="transition-all duration-250 ease-in"
+          leave-from-class="max-h-[1000px] opacity-100 overflow-hidden"
+          leave-to-class="max-h-0 opacity-0 overflow-hidden"
+        >
+        <div v-if="isFilterExpanded" class="grid grid-cols-1 md:grid-cols-3 gap-6">
           <!-- Owner Filter -->
           <div class="space-y-3">
             <label
@@ -545,9 +640,9 @@ const handleDeleteConfirm = async () => {
           </div>
 
           <!-- Pattern Filter -->
-          <div class="space-y-3">
+          <div class="space-y-3 md:col-span-3 lg:col-span-1">
             <label
-              class="block text-xl font-bold text-slate-600 dark:text-slate-400"
+              class="block text-xl font-bold text-slate-600 dark:text-slate-400 "
               >ลักษณะสี</label
             >
             <div class="flex flex-wrap gap-2">
@@ -651,6 +746,7 @@ const handleDeleteConfirm = async () => {
         </div>
           </div>
         </div>
+        </Transition>
       </div>
 
       <!-- Loading State -->
@@ -699,22 +795,46 @@ const handleDeleteConfirm = async () => {
       </div>
 
       <!-- Grid Content -->
-      <div
-        v-else
-        class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8"
-      >
-        <ClothingCard
-          v-for="item in filteredClothes"
-          :ownerColors="ownerColors"
-          :key="item.id"
-          :item="item"
-          @edit="openEditModal"
-          @delete="triggerDelete"
-          @click="openDetailModal(item)"
-        />
+      <div v-else class="">
+        <div class="flex justify-center items-center w-full max-w-[300px] rounded-full bg-slate-100 dark:bg-slate-800 p-3 shadow-sm border border-slate-100 dark:border-slate-700 space-y-6 ">
+          <p class="font-bold text-xl text-slate-600 dark:text-slate-400 flex gap-1 items-center justify-center">
+            <svg class="fill-slate-600 dark:fill-slate-400" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px"><path d="M120-160q-17 0-28.5-11.5T80-200q0-10 4-18.5T96-232l344-258v-70q0-17 12-28.5t29-11.5q25 0 42-18t17-43q0-25-17.5-42T480-720q-25 0-42.5 17.5T420-660h-80q0-58 41-99t99-41q58 0 99 40.5t41 98.5q0 47-27.5 84T520-526v36l344 258q8 5 12 13.5t4 18.5q0 17-11.5 28.5T840-160H120Zm120-80h480L480-420 240-240Z"/></svg>
+            จำนวนเสื้อผ้าที่พบ <span class="text-indigo-600 dark:text-indigo-400 text-xl mx-1">{{ filteredClothes.length }}</span> ชิ้น</p>
+        </div>
+        
+        <div
+          class="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8"
+        >
+          <ClothingCard
+            v-for="item in filteredClothes"
+            :ownerColors="ownerColors"
+            :key="item.id"
+            :item="item"
+            @edit="openEditModal"
+            @delete="triggerDelete"
+            @click="openDetailModal(item)"
+          />
+        </div>
       </div>
     </main>
 
+    <footer class="w-full py-8 mt-12 border-t border-slate-200/60 dark:border-slate-800 bg-white/30 dark:bg-slate-900/30 backdrop-blur-sm">
+      <div class="max-w-7xl mx-auto px-4 text-center space-y-2">
+        <p class="text-lg font-medium text-slate-500 dark:text-slate-400 flex items-center justify-center flex-wrap gap-2">
+          <span>&copy; 2026</span>
+          <span class="font-bold text-slate-700 dark:text-slate-200 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors duration-200">
+            Supalerk Kamolnetr
+          </span>
+          <span class="hidden sm:inline text-slate-300 dark:text-slate-700">|</span>
+          <span class="text-xs bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 px-3 py-1 rounded-full font-bold tracking-wide">
+            WhoseWear Project
+          </span>
+        </p>
+        <p class="text-sm text-slate-400 dark:text-slate-500 font-medium">
+          Made for my family
+        </p>
+      </div>
+    </footer>
     <!-- Modals -->
     <Teleport to="body">
       <!-- Add/Edit Modal -->

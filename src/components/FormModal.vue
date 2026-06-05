@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch ,nextTick } from 'vue';
 import BaseModal from './BaseModal.vue';
 
 const props = defineProps({
@@ -42,45 +42,72 @@ const categories = ['เสื้อเชิ้ต','เสื้อยืด',
 // Predefined family members strictly as requested
 const owners = ['ภูมิ', 'แพร', 'จิ๋ว', 'เก๋', 'ใหญ่'];
 
-// Track modal open/close to populate initial values or reset
-watch(() => props.show, (newShow) => {
+
+// โครงสร้างที่ 1: จัดการเปิด/ปิดโมดอล และเคลียร์ค่าเริ่มต้นให้พร้อมเสร็จสรรพในรอบเดียว
+watch(() => props.show, async (newShow) => {
   if (newShow) {
     if (props.item) {
-      // Edit Mode Initialization
+      // ---- โหมดแก้ไขข้อมูล (EDIT MODE) ----
+      // 1. ดักจับและกำหนดค่าเริ่มต้นที่ปลอดภัย (Fallback) เพื่อป้องกันกรณีข้อมูลจาก DB เป็น Null/Undefined
+      const safePatternType = props.item.pattern_type || 'solid';
+      let safeColors = Array.isArray(props.item.colors) ? [...props.item.colors] : [];
+
+      // 2. จัดการรูปทรงของอาเรย์สีให้ถูกต้องตามโครงสร้าง UI "ตั้งแต่เกิด" เพื่อไม่ให้ Watcher ตัวที่สองมาแก้ทีหลัง
+      if (safePatternType === 'pattern') {
+        if (safeColors.length <= 1) {
+          safeColors = [safeColors[0] || '', ''];
+        }
+      } else {
+        safeColors = [safeColors[0] || ''];
+      }
+
+      // 3. กำหนดค่าให้ Form แบบกลุ่มก้อนเดียว (Atomic Assignment)
       form.value = {
-        name: props.item.name,
-        pattern_type: props.item.pattern_type,
-        colors: [...props.item.colors],
-        category: props.item.category,
-        owner: props.item.owner
+        name: props.item.name || '',
+        pattern_type: safePatternType,
+        colors: safeColors,
+        category: props.item.category || '',
+        owner: props.item.owner || ''
       };
       imageFile.value = null;
-      imagePreview.value = props.item.image_url;
-      initialFormString.value = JSON.stringify(form.value);
+      imagePreview.value = props.item.image_url || null;
+
     } else {
-      // Add Mode Initialization
+      // ---- โหมดเพิ่มข้อมูลใหม่ (ADD MODE) ----
       form.value = {
         name: '',
         pattern_type: 'solid',
         colors: [''],
-        category: 'เสื้อ',
-        owner: 'ภูมิ'
+        category: '',
+        owner: ''
       };
       imageFile.value = null;
       imagePreview.value = null;
-      initialFormString.value = '';
     }
-  }
-});
 
-// Monitor pattern_type to handle colors array shape
-watch(() => form.value.pattern_type, (newType) => {
+    // 🌟 จุดสำคัญที่สุด: ใช้ nextTick เพื่อรอให้ระบบ Reactivity และ Watcher ตัวอื่นประมวลผลจนนิ่งสนิทก่อน
+    // จากนั้นค่อยสั่งบันทึกสถานะตั้งต้น จะช่วยแก้บัค "แจ้งเตือนฟอร์มเปลี่ยนทั้งที่ยังไม่ได้กดอะไร" ได้ขาดลอยครับ
+    await nextTick();
+    initialFormString.value = JSON.stringify(form.value);
+  }
+},{ immediate: true });
+
+
+// โครงสร้างที่ 2: เฝ้าดูการเปลี่ยนประเภท (สีพื้น / ลาย) เฉพาะตอนที่ผู้ใช้กำลังกรอกข้อมูลบนหน้าจอจริงเท่านั้น
+watch(() => form.value?.pattern_type, (newType) => {
+  // ดักจับกรณีถ้าปิดโมดอลอยู่ หรือฟอร์มยังไม่ถูกสร้าง ไม่ต้องรันโค้ดส่วนนี้ต่อ
+  if (!props.show || !form.value) return;
+
   if (newType === 'pattern') {
+    // โหมดผ้าลาย: ตรวจสอบถ้ามีช่องใส่สีไม่ถึง 2 ช่อง ให้ขยายช่องรองรับทันที
     if (form.value.colors.length <= 1) {
       form.value.colors = [form.value.colors[0] || '', ''];
     }
   } else {
-    form.value.colors = [form.value.colors[0] || ''];
+    // โหมดสีพื้น: หดอาเรย์ให้เหลือสีเดียว เพื่อความถูกต้องของโครงสร้างข้อมูล
+    if (form.value.colors.length !== 1) {
+      form.value.colors = [form.value.colors[0] || ''];
+    }
   }
 });
 
@@ -116,32 +143,42 @@ const removeColorInput = (index) => {
 };
 
 // Detect if any form value changed (For Edit Mode disable-save requirement)
+// Detect if any form value changed (For Edit Mode disable-save requirement)
 const isFormChanged = computed(() => {
   if (!props.item) {
     return true; // Always allow save in Add mode
   }
   
+  // 🌟 [แก้บัคที่นี่]: ดักจับกรณีที่หน้าต่างเพิ่งเปิดและยังเซฟสถานะเริ่มต้นไม่เสร็จ ป้องกันโค้ดพัง!
+  if (!initialFormString.value) {
+    return false;
+  }
+  
   if (imageFile.value !== null) return true; // Changed if a new image was selected
   if (imagePreview.value === null && props.item.image_url !== null) return true; // Image removed
 
-  const current = JSON.stringify({
-    name: form.value.name.trim(),
-    pattern_type: form.value.pattern_type,
-    colors: form.value.colors.map(c => c.trim()).filter(c => c !== ''),
-    category: form.value.category,
-    owner: form.value.owner
-  });
+  try {
+    const current = JSON.stringify({
+      name: form.value.name.trim(),
+      pattern_type: form.value.pattern_type,
+      colors: form.value.colors.map(c => c.trim()).filter(c => c !== ''),
+      category: form.value.category,
+      owner: form.value.owner
+    });
 
-  const parsedInitial = JSON.parse(initialFormString.value);
-  const normalizedInitial = JSON.stringify({
-    name: parsedInitial.name.trim(),
-    pattern_type: parsedInitial.pattern_type,
-    colors: parsedInitial.colors.map(c => c.trim()).filter(c => c !== ''),
-    category: parsedInitial.category,
-    owner: parsedInitial.owner
-  });
+    const parsedInitial = JSON.parse(initialFormString.value);
+    const normalizedInitial = JSON.stringify({
+      name: parsedInitial.name.trim(),
+      pattern_type: parsedInitial.pattern_type,
+      colors: parsedInitial.colors.map(c => c.trim()).filter(c => c !== ''),
+      category: parsedInitial.category,
+      owner: parsedInitial.owner
+    });
 
-  return current !== normalizedInitial;
+    return current !== normalizedInitial;
+  } catch (e) {
+    return false; // ถ้าเกิดข้อผิดพลาดในการคำนวณ ให้ปิดปุ่มเซฟไว้ก่อนเพื่อความปลอดภัย
+  }
 });
 
 // Compute form validity
