@@ -37,7 +37,19 @@ const solidColors = [
 ];
 
 // Predefined categories as requested
-const categories = ['เสื้อเชิ้ต','เสื้อยืด','เสื้อกันหนาว','กางเกงขาสั้น','กางเกงขายาว','กระโปรง','หมวก','ถุงเท้า' ];
+const categories = [
+  "ชุดทำงาน",
+  "ชุดนอน",
+  "เสื้อโปโล",
+  "เสื้อเชิ้ต",
+  "เสื้อยืด",
+  "เสื้อกันหนาว",
+  "กางเกงขาสั้น",
+  "กางเกงขายาว",
+  "กระโปรง",
+  "หมวก",
+  "ถุงเท้า",
+];
 
 // Predefined family members strictly as requested
 const owners = ['ภูมิ', 'แพร', 'จิ๋ว', 'เก๋', 'ใหญ่'];

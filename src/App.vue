@@ -156,6 +156,9 @@ const colorOptions = solidColors
 // Use color objects with name and code
 const categories = [
   "ทั้งหมด",
+  "ชุดทำงาน",
+  "ชุดนอน",
+  "เสื้อโปโล",
   "เสื้อเชิ้ต",
   "เสื้อยืด",
   "เสื้อกันหนาว",
