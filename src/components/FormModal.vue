@@ -49,6 +49,7 @@ const categories = [
   "กระโปรง",
   "หมวก",
   "ถุงเท้า",
+  "ผ้าขนหนู"
 ];
 
 // Predefined family members strictly as requested
