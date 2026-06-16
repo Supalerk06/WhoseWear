@@ -753,7 +753,18 @@ const handleDeleteConfirm = async () => {
         </Transition>
       </div>
 
+
+      <!-- Result Count -->
+      <div v-if="!loading" class="flex items-center justify-between px-1">
+        <p class="text-lg font-bold text-slate-500 dark:text-slate-400">
+          พบเสื้อผ้าทั้งหมด
+          <span class="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400 mx-1">{{ filteredClothes.length }}</span>
+          รายการ
+        </p>
+      </div>
+
       <!-- Loading State -->
+
       <div
         v-if="loading"
         class="flex flex-col items-center justify-center py-24 space-y-4"
