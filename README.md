@@ -4,11 +4,6 @@ A modern, highly accessible clothing management web application designed to help
 
 ---
 
-## 📸 Preview
-
-![Home Page](./docs/home.png)
-
----
 
 ## ✨ Features
 
